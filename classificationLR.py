@@ -71,7 +71,7 @@ class LogisticRegressionModelGD(object):
             validation_norm_error.append(validation_err)
             norm_error.append(err)
 
-        plt.figure(1)
+        plt.figure(reg_term % 0.5)
         plt.subplot(211)
         plt.plot(norm_error)
         plt.title("Lambda {}, Step {}".format(reg_term,eta))
@@ -143,7 +143,7 @@ def main():
 def startTraining(training_data, training_labels, beta_init, validation_data, validation_labels):
     print(training_data.shape)
     print(validation_data.shape)
-    lam = np.linspace(0.5, 20.0, 40)
+    lam = np.linspace(0.0, 5.0, 11)
     step = np.linspace(0.1,1, 10)
     # lam = np.linspace(14.5, 18, 8)
     work = mpt.JoinableQueue()
