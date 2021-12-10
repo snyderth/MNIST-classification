@@ -1,3 +1,4 @@
+from os import device_encoding
 import numpy as np
 import cupy as cp
 from numpy.lib.function_base import gradient
@@ -7,7 +8,8 @@ import matplotlib.pyplot as plt
 import sys
 # np.set_printoptions(threshold=sys.maxsize)
 import multiprocessing as mpt
-
+import enum
+import pandas as pd
 
 class LogisticRegressionModelGD(object):
     def __init__(self, training_data: cp.ndarray, training_labels: cp.ndarray, beta_init: cp.ndarray, validation_data: cp.ndarray, validation_labels: cp.ndarray, learning_rate=0.1, lam=1.0):
@@ -24,28 +26,54 @@ class LogisticRegressionModelGD(object):
 
     # @njit(parallel=True, nopython=True)
     def cross_entropy_error(self, x: cp.ndarray, training_labels: cp.ndarray, beta: cp.ndarray, indicator, reg_term):
-        # print(indicator.T @ posterior_prob(x, beta))
-        # print(x.shape)
-        # print(beta.shape)
-        # print(indicator.shape)
-        # print(posterior_prob(x,beta))
-        error = (-1/x.shape[0]) * ((indicator.T @ cp.log(self.posterior_prob(x, beta))) + reg_term * cp.linalg.norm(beta)**2)
+        # print(cp.multiply(indicator, x@beta))
+        # print(cp.multiply(indicator, cp.exp(cp.multiply(indicator, x@beta)))) 
+        sub = cp.log(cp.exp((x@beta)).sum(axis=1))
+        sub = cp.asarray([sub for i in range(beta.shape[1])])
+        ln_post_prob = cp.multiply(indicator , (x @ beta) - sub.T)
+        # ln_post_prob = ( (x @ beta) - sub.T)
+        # print("CEE")
+        # print(ln_post_prob)
+
+        error = (-1/x.shape[0]) * ((ln_post_prob).sum() + reg_term * (cp.linalg.norm(beta, axis=1)**2).sum())
         return cp.asarray(error)
     # @njit(nopython=True)
-    def posterior_prob(self,x: cp.ndarray, beta:cp.ndarray):
-        denom = 0.0
-    
+    def posterior_prob(self,x: cp.ndarray, beta:cp.ndarray, indicator):
+        numerator = cp.multiply(indicator, cp.exp(x @ beta))
+        # numerator = cp.exp(x @ beta)
+        # print(numerator.shape)
+        denom = (cp.exp(x @ beta).sum(axis=1))
+        arr = []
         for i in range(beta.shape[1]):
-            # print(beta[:,i])
-            # print(np.exp(x[i].T @ beta[:,i]))
-            # print("Mult: {} X {}".format(x[i].T.shape, beta.T[i].shape))
-            denom = denom + cp.exp(x[i].T @ beta[:,i])
-            # print(denom)
-        # print(x@beta < 0)
-        return (cp.asarray(x) @ cp.asarray(beta)) / denom
+            arr.append(denom)
+        denom = cp.asarray(arr)
+        # print(denom.shape)
+        # print(denom)
+        post =cp.divide(numerator, denom.T)
+        # print(post)
+        return post
+    
+    def validate_map(self, valid_data: cp.ndarray, valid_labels: cp.ndarray, beta: cp.ndarray):
+        result = (valid_data @ beta)
+        # print(result)
+        max_result = cp.asarray(cp.argmax(result, axis=1))
+        # res = pd.DataFrame([max_result, valid_labels])
+        # print(res)
+        # validation = cp.where((max_result - valid_labels) == 0)
+        # validation_err = len(validation) / valid_labels.shape[0]
+        # print(validation_err)
+
+        # preds = []
+        # for i in range(max_result.shape[0]):
+        #     preds.append(np.where(result[i] == max_result[i])[0]) 
+
+        # print(preds)
+        # print(preds.shape)
+        # print("Actual: {}, MAP: {}".format(valid_labels, result))
+
+
 
     def cross_entropy_error_gradient_descent(self,x:cp.ndarray, training_labels:cp.ndarray, beta:cp.ndarray, x_valid:cp.ndarray, valid_labels:cp.ndarray, eta, reg_term):
-        # indicator = np.matrix(np.zeros((x.shape[0], beta.shape[1])))
         indicator = cp.asarray(np.zeros((x.shape[0], beta.shape[1])))
         for i in range(x.shape[0]):
             indicator[i,training_labels[i]] = 1
@@ -54,20 +82,19 @@ class LogisticRegressionModelGD(object):
             validation_indicator[i,valid_labels[i]] = 1
         norm_error = []
         validation_norm_error = [] 
-        grad = -1/x.shape[0] * ((x.T @ (indicator - (self.posterior_prob(x, beta)))) + 2 * reg_term * beta)
-        # while np.norm(grad) > 1:
-        print(grad.shape)
-        for i in tqdm(range(700), ascii=True, desc="Lambda: {}".format(reg_term)):
-        # for i in range(700):
-            # print("Beta {}".format(beta))
-            grad = -1/x.shape[0] * (x.T @ (indicator - self.posterior_prob(x, beta)) + 2 * reg_term * beta)
-            # print(grad.shape)
-            # print("Norm Grad: {}".format(np.linalg.norm(grad)))
-            # print("Gradient: {}".format(grad >= 0.0))
-            beta = beta + eta * grad
+        # grad = -1/x.shape[0] * ((x.T @ (indicator - cp.multiply(indicator, self.posterior_prob(x, beta, indicator)).sum(axis = 1)))) #+ 2 * reg_term * beta
+        for i in tqdm(range(3000), ascii=True, desc="Lambda: {}".format(reg_term)):
+
+            # grad = -1/x.shape[0] * (x.T @ (indicator - self.posterior_prob(x, beta, indicator))) #+ 2 * reg_term * beta
+            grad = -1/x.shape[0] * ((x.T @ (indicator - self.posterior_prob(x, beta, indicator)))) + 2 * reg_term * beta
+            # print(grad)
+            beta = beta - eta * grad
+
             err = cp.linalg.norm(self.cross_entropy_error(x, training_labels, beta, indicator, reg_term))**2
             validation_err = cp.linalg.norm(self.cross_entropy_error(x_valid, valid_labels, beta, validation_indicator, reg_term))**2
-            # print("Norm error: {}".format(err))
+            self.validate_map(x_valid, valid_labels, beta)
+            # print()
+            # print("Valid Err: {}".format(validation_err))
             validation_norm_error.append(validation_err)
             norm_error.append(err)
 
@@ -125,8 +152,8 @@ def main():
     validation_data = np.append(validation_data, aug_valid, axis = 1)
     training_data = np.append(training_data, aug_train, axis = 1)
     # print(aug_train)
-    # beta_init = np.random.normal(5, size = (training_data.shape[1], 10))
-    beta_init = np.zeros((training_data.shape[1], 10)) + 5
+    beta_init = np.random.normal(0, size = (training_data.shape[1], 10))
+    # beta_init = np.zeros((training_data.shape[1], 10)) #+ 0.000000001
     # print(validation_data.shape)
     # print(training_data.shape)
     # print(validation_labels.shape)
@@ -143,11 +170,12 @@ def main():
 def startTraining(training_data, training_labels, beta_init, validation_data, validation_labels):
     print(training_data.shape)
     print(validation_data.shape)
-    lam = np.linspace(0.0, 5.0, 11)
+    lam = np.linspace(0.001, 116.0, 1)
     step = np.linspace(0.1,1, 10)
+    # lam = np.linspace(1.0, 5.0, 1)
     # lam = np.linspace(14.5, 18, 8)
     work = mpt.JoinableQueue()
-    num_workers = 4#len(lam)
+    num_workers = 1#len(lam)
     workers = [Worker(work) for i in range(num_workers)]
 
     for w in workers:
@@ -156,7 +184,7 @@ def startTraining(training_data, training_labels, beta_init, validation_data, va
     for l in (lam):
     # for s in step:
         print(l)
-        work.put(LogisticRegressionModelGD(cp.asarray(training_data), cp.asarray(training_labels), cp.asarray(beta_init), cp.asarray(validation_data), cp.asarray(validation_labels), 0.1, l))
+        work.put(LogisticRegressionModelGD(cp.asarray(training_data), cp.asarray(training_labels), cp.asarray(beta_init), cp.asarray(validation_data), cp.asarray(validation_labels), 0.2, l))
         # w = LogisticRegressionModelGD(training_data, training_labels, beta_init, 0.1, l/2)
         # w()
     for i in range(num_workers):
