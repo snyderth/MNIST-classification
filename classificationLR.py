@@ -55,21 +55,15 @@ class LogisticRegressionModelGD(object):
     
     def validate_map(self, valid_data: cp.ndarray, valid_labels: cp.ndarray, beta: cp.ndarray):
         result = (valid_data @ beta)
-        # print(result)
-        max_result = cp.asarray(cp.argmax(result, axis=1))
-        # res = pd.DataFrame([max_result, valid_labels])
-        # print(res)
-        # validation = cp.where((max_result - valid_labels) == 0)
-        # validation_err = len(validation) / valid_labels.shape[0]
-        # print(validation_err)
-
-        # preds = []
-        # for i in range(max_result.shape[0]):
-        #     preds.append(np.where(result[i] == max_result[i])[0]) 
-
-        # print(preds)
-        # print(preds.shape)
-        # print("Actual: {}, MAP: {}".format(valid_labels, result))
+        # print(result.shape)
+        max_result = (np.argpartition(cp.asnumpy(result), kth=result.shape[1]-1, axis=1))[:,-1]
+        res = (np.zeros((len(max_result), 1)))
+        for i in range(valid_labels.shape[0]):
+            if valid_labels[i] != max_result[i]:
+                res[i] = 1
+        
+        print(np.mean(res))
+        
 
 
 
